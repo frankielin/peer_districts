@@ -5,6 +5,9 @@
 # i've already uploaded these cleaned csv files so you don't actually have to run this
 source(referenda_cleaning.R)
 
+## Pull school finance data from Urban Institute
+source("./load_finances.R")
+
 # RD and probit just for Wisconsin ref
 source(wi_ref_analysis.R)
 
