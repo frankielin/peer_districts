@@ -23,9 +23,6 @@ data <- get_education_data(level = "school-districts",
 ## Important variables: 
 ## - leaid: Identifies district (NCES)
 ## - Anything that starts with exp: These are the expenditure variables
-##anything that starts with exp
-
-
 
 ############
 ## Export ##
