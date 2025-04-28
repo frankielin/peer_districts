@@ -42,7 +42,7 @@ uniform_ref=subset(in_bonds, share_passed_year %in% c(0,1))
 uniform_ref[, total_amount:=sum(as.numeric(amount_imputed), na.rm=T), by=c("leaid", "year")]
 uniform_ref[, vote_share:=weighted.mean(pctyes, totvotes), by=c("leaid", "year")]
 
-unique_ref=unique(subset(uniform_ref, select=c("leaid","STATEFP", "year", "total_amount", "vote_share")))
+unique_ref=unique(subset(uniform_ref, select=c("leaid","STATEFP", "year", "total_amount", "vote_share", "votesharereqd")))
 
 setnames(ordered_state_bounds, "GEOID", "leaid")
 
@@ -82,8 +82,8 @@ share_ref_past_list=lapply(1:nrow(ref_w_bounds),
 ref_w_bounds$share_ref_future=unlist(share_ref_future_list)
 ref_w_bounds$share_ref_past=unlist(share_ref_past_list)
 
-ref_w_bounds[, scaled_share:=vote_share-.5]
-ref_w_bounds[, pass_flag:=ifelse(vote_share>.5, 1,0)]
+ref_w_bounds[, scaled_share:=vote_share-votesharereqd]
+ref_w_bounds[, pass_flag:=ifelse(vote_share>votesharereqd, 1,0)]
 
 
 ref_w_bounds[,tri_weight:=ifelse(abs(scaled_share)<.1, abs(scaled_share)/.1, 0 )]
