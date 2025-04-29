@@ -52,7 +52,7 @@ ref_w_bounds=merge(unique_ref, ordered_state_bounds, by= c("leaid", "STATEFP"), 
 share_neighbor_ref_future=function(in_year, in_dist_rownum, in_state){
   neighbor_ids=subset(state_bounds[[in_state]][state_dist_neighbors_list[[in_state]][[in_dist_rownum]],], select="GEOID")
   neighbor_refs_future=subset(unique_ref, leaid %chin% neighbor_ids$GEOID &
-                                year %in% (in_year+1):(in_year+3))
+                                year %in% (in_year):(in_year+1))
   
   
   n_neighbors=nrow(neighbor_ids)
@@ -91,3 +91,10 @@ rd=lm(share_ref_future ~ pass_flag + scaled_share + pass_flag:scaled_share + sha
 
 summary(rd)
 
+
+ref_w_bounds[scaled_share<0, quantile_bin:= ntile(scaled_share,n=10)]
+ref_w_bounds[scaled_share>=0, quantile_bin:= ntile(scaled_share,n=10)+10]
+ref_w_bounds[, bin_mean_ref:=mean(share_ref_future), by=quantile_bin]
+
+plot_data=unique(subset(ref_w_bounds, select=c("quantile_bin", "bin_mean_ref")))
+ggplot(plot_data, aes(x=quantile_bin, y=bin_mean_ref))+ geom_point()+geom_vline(xintercept = 11)
