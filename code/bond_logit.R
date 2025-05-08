@@ -249,6 +249,7 @@ analysis_dat[, share_past_winning_ref := past_unique_winning_ref_districts/n_in_
 analysis_dat[, cz_combined := paste0(fips,"_",sedacz)]
 analysis_dat[,rev_state_total := rev_state_total/1000000]
 analysis_dat[,rev_local_total := rev_local_total/1000000]
+analysis_dat[,exp_total := exp_total/1000000]
 
 ## Pulling the last 
 analysis_dat[,first_ref := (bond_instance == 1)*is.na(year_of_last_ref)]
@@ -261,11 +262,12 @@ check = analysis_dat[, c('year', 'leaid', 'bond_instance', 'first_ref', 'year_of
 
 #### Regression lol
 summary(felm(bond_instance ~ 
-               share_past_ref + 
+               past_unique_ref_districts + 
                share_past_winning_ref + 
                recent_ref + 
                rev_state_total +
-               rev_local_total
+               rev_local_total + 
+               exp_total
              | year + leaid, analysis_dat)) 
 
 
