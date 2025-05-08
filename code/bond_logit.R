@@ -79,7 +79,7 @@ district_finances = summary_bonds[
   district_finances,
   on = .(leaid = leaid, year = year),
   nomatch = NA
-] # this is apparently the syntax for a left join this sucks lol I'll just use the normal merge syntax from now on
+] 
 print(paste("Post-merge rows:", nrow(district_finances)))
 
 ## Checking the merge (will need to do some diagnosis on what is dropped later ) 
@@ -152,7 +152,7 @@ left = winning_instances[
 left = left[!is.na(instance_leaid)] # Dropping rows that have zero past instances
 left = left[instance_leaid != leaid] # Removing instances where the district itself wins here 
 N_past_winning_refs_dat = left[,.(past_unique_winning_ref_districts = uniqueN(instance_leaid),
-                                  past_avg_winning_margin_districts = mean(instance_centered_vote_share)), by = .(leaid, year)]
+                                  past_avg_winning_margin_districts = mean(instance_centered_vote_share, na.rm = TRUE)), by = .(leaid, year)]
 
 print(nrow(district_finances))
 district_finances = N_past_winning_refs_dat[
@@ -161,6 +161,8 @@ district_finances = N_past_winning_refs_dat[
   nomatch = NA
 ] # Merging back onto the main dataframe
 
+sum(is.na(winning_instances$instance_centered_vote_share))
+sum(is.na(N_past_winning_refs_dat)) # this is weird
 
 ## Checking the share of districts in the CA that LOST a bond measure within X years
 set_year_past = 3
@@ -247,9 +249,11 @@ analysis_dat[, share_past_ref := past_unique_ref_districts/n_in_cz]
 analysis_dat[, share_past_losing_ref := past_unique_losing_ref_districts/n_in_cz]
 analysis_dat[, share_past_winning_ref := past_unique_winning_ref_districts/n_in_cz]
 analysis_dat[, cz_combined := paste0(fips,"_",sedacz)]
+analysis_dat[, year_state:= paste0(fips, year) ]
 analysis_dat[,rev_state_total := rev_state_total/1000000]
 analysis_dat[,rev_local_total := rev_local_total/1000000]
 analysis_dat[,exp_total := exp_total/1000000]
+analysis_dat[,salaries_total := salaries_total/1000000]
 
 ## Pulling the last 
 analysis_dat[,first_ref := (bond_instance == 1)*is.na(year_of_last_ref)]
@@ -260,6 +264,7 @@ analysis_dat[is.na(recent_ref),recent_ref := 0]
 check = analysis_dat[, c('year', 'leaid', 'bond_instance', 'first_ref', 'year_of_last_ref')]
 
 
+
 #### Regression lol
 summary(felm(bond_instance ~ 
                past_unique_ref_districts + 
@@ -267,9 +272,11 @@ summary(felm(bond_instance ~
                recent_ref + 
                rev_state_total +
                rev_local_total + 
-               exp_total
-             | year + leaid, analysis_dat)) 
+               exp_total + 
+               salaries_total
+             | year_state + leaid, data = analysis_dat )
+        ) 
 
 
-
+colnames(analysis_dat)
 
