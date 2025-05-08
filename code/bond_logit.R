@@ -1,4 +1,8 @@
-install.packages("sf")
+rm(list = ls())
+
+######################
+## Loading Packages ##
+######################
 library(sf)
 library(data.table)
 library(ggplot2)
@@ -6,80 +10,264 @@ library(stringr)
 library(tidyr)
 library(foreach)
 library(doParallel)
+library(lfe)
 
-in_bonds=fread("~/school_ref/bonds_biasi.csv")
-leaid_bounds=read_sf("~/school_ref/us_district_shapefile/schooldistrict_sy1718_tl18.shp")
+##################
+## Loading Data ##
+##################
+## Loading Referendum Data 
+in_bonds = fread("../data/referendum/bonds_biasi.csv") # Bond Ref Data
 
-in_bonds[,leaid:=str_pad(leaid, 7, "left", "0")]
-in_bonds[, STATEFP:=substr(leaid, 1,2)]
+## Commuting Zone Data 
+# leaid_bounds=read_sf("../data/us_district_shapefile/schooldistrict_sy1718_tl18.shp") # There is no shp file in the folder?
+in_cz = fread("../data/seda_crosswalk_5.0.csv")
 
-keep_state_bounds=subset(leaid_bounds, STATEFP  %chin% unique(in_bonds$STATEFP))
-rm(leaid_bounds)
-gc()
+## Loading Shape Files 
+leaid_bounds=read_sf("../data/referendum/us_district_shapefile") # Loading overall shp files (is this correct to pull? I assume no)
 
-#nrow(in_bonds)/nrow(expand.grid(keep_state_bounds$GEOID, in_bonds$year))
-state_bounds=split(keep_state_bounds, keep_state_bounds$STATEFP)
-sf_use_s2(FALSE)
-state_dist_neighbors_list=lapply(state_bounds, st_touches)
+## Loading district finance data 
+district_finances = fread("../data/UI_district_finances.csv")
 
-for(i in 1:length(state_bounds)){
-  state_bounds[[i]]$row_number=1:nrow(state_bounds[[i]])
-}
-ordered_state_bounds=rbindlist(state_bounds)
+###################
+## Cleaning Data ##
+###################
+#### Commuting Zones Data 
+seda_dist_cz_xwalk=unique(subset(in_cz,leatype="Regular public school district", select=c("leaid", "fips", "sedacz")))
+seda_dist_cz_xwalk[, n_in_cz:=uniqueN(leaid), by=c("fips", "sedacz")] 
+seda_dist_cz_xwalk <- seda_dist_cz_xwalk[
+  , .SD[which.max(n_in_cz)],
+  by = leaid
+][
+  , .(leaid, fips, sedacz, n_in_cz)
+]
 
-in_bonds=subset(in_bonds, !is.na(leaid) & !is.na(year))
-in_bonds$flag=1
-in_bonds[, n_proposed_year:=sum(flag), by=c("leaid", "year")]
-in_bonds=subset(in_bonds, !is.na(leaid) & !is.na(year))
-in_bonds$flag=1
-in_bonds[, n_proposed_year:=sum(flag), by=c("leaid", "year")]
-in_bonds[, share_passed_year:=sum(pass)/n_proposed_year, by=c("leaid", "year")]
-uniform_ref=subset(in_bonds, share_passed_year %in% c(0,1))
-uniform_ref[, total_amount:=sum(as.numeric(amount_imputed), na.rm=T), by=c("leaid", "year")]
-uniform_ref[, vote_share:=weighted.mean(pctyes, totvotes), by=c("leaid", "year")]
+seda_dist_cz_xwalk[, fips := sprintf("%02d", as.integer(fips))] # note that we have a fips code already for the 
+seda_dist_cz_xwalk[, leaid := sprintf("%07d", as.integer(leaid))]
 
-unique_ref=unique(subset(uniform_ref, select=c("leaid","STATEFP", "year", "total_amount", "vote_share")))
-gc()
+#### Bonds Data
+## Creating variables 
+in_bonds <- in_bonds[!is.na(leaid)]
+in_bonds <- in_bonds[!is.na(year)]
+in_bonds <- in_bonds[!(state %in% c("KS", "MA", 'MD', 'MO', 'NE'))] # filters out sus states
 
-share_neighbor_ref_past=function(in_year, in_dist_rownum, in_state){
-  neighbor_ids=subset(state_bounds[[in_state]][state_dist_neighbors_list[[in_state]][[in_dist_rownum]],], select="GEOID")
-  neighbor_refs_past=subset(unique_ref, leaid %chin% neighbor_ids$GEOID & year %in% (as.numeric(in_year)-3):as.numeric(in_year))
+in_bonds[, id := 1:nrow(in_bonds)]
+in_bonds[, leaid := sprintf("%07d", as.integer(leaid))]
+in_bonds[, state_fips := substr(leaid, 1,2)]
+in_bonds = merge(in_bonds, seda_dist_cz_xwalk, by = 'leaid')
+in_bonds[, vote_share:=votesyes/totvotes]
+in_bonds[is.na(votesharereqd), votesharereqd:=.5]
+in_bonds[, centered_vote_share:=vote_share-votesharereqd]
+
+## Creating summary table of the bonds per district-year
+summary_bonds = in_bonds[,.(
+  bond_count    = uniqueN(id),
+  bond_instance = uniqueN(id)>=1
+), 
+by = .(leaid, year)
+]
+
+
+#### CREATE Base Dataframe Creation base dataframe should be all the 
+## Filtering district finance data with data that are available for
+states_in_bonds = unique(in_bonds[,state_fips])
+district_finances[,fips:=sprintf("%02d", as.integer(fips))] # rename fips into the two digit state fips 
+district_finances = district_finances[.(states_in_bonds), on = .(fips)] # Filters (binary search bitches)
+
+## Merging on bond data 
+print(paste("Pre-merge rows:", nrow(district_finances)))
+district_finances = summary_bonds[
+  district_finances,
+  on = .(leaid = leaid, year = year),
+  nomatch = NA
+] # this is apparently the syntax for a left join this sucks lol I'll just use the normal merge syntax from now on
+print(paste("Post-merge rows:", nrow(district_finances)))
+
+## Checking the merge (will need to do some diagnosis on what is dropped later ) 
+print(paste("N Summary Bonds:", nrow(summary_bonds)))
+print(paste("Merged rows:", sum(!is.na(district_finances[,bond_instance])))) # I lose 700 observations let's ignore this for now
+
+## Merging Commuting Zone 
+district_finances = seda_dist_cz_xwalk[
+  district_finances,
+  on = .(leaid = leaid, fips = fips),
+  nomatch = NA
+] # note that some schools are missing districts (they are missing the )
+
+
+## Checking the share of districts within CZ that had a bond measure in the past X years 
+set_year_past = 3
+
+left = district_finances[,c('leaid','fips','sedacz','year')]
+left[,max_year:= year-1]
+left[,min_year:= year-set_year_past]
+instances = in_bonds[,c('leaid','year','fips','sedacz')]
+setnames(instances, 
+         c('leaid','year','fips','sedacz'), 
+         paste0("instance_", c('leaid','year','fips','sedacz')))
+
+print(nrow(left))
+left = instances[
+  left,
+  on = .(instance_sedacz = sedacz,
+         instance_fips = fips,
+         instance_year <= max_year,
+         instance_year >= min_year),
+  nomatch = NA,
+  mult = "all"
+]
+
+left = left[!is.na(instance_leaid)] # Dropping rows that have zero past instances
+N_past_refs_dat = left[,.(past_unique_ref_districts = uniqueN(instance_leaid)), by = .(leaid, year)]
+
+print(nrow(district_finances))
+district_finances = N_past_refs_dat[
+  district_finances,
+  on = .(leaid = leaid, year = year),
+  nomatch = NA
+] # Merging back onto the main dataframe
+
+
+## Checking the share of districts in the CA that WON a bond measure within X years
+set_year_past = 3
+
+left = district_finances[,c('leaid','fips','sedacz','year')]
+left[,max_year:= year-1]
+left[,min_year:= year-set_year_past]
+winning_instances = in_bonds[pass == 1,c('leaid','year','fips','sedacz', "centered_vote_share")]
+setnames(winning_instances, 
+         c('leaid','year','fips','sedacz', 'centered_vote_share'), 
+         paste0("instance_", c('leaid','year','fips','sedacz', "centered_vote_share")))
+
+print(nrow(left))
+left = winning_instances[
+  left,
+  on = .(instance_sedacz = sedacz,
+         instance_fips = fips,
+         instance_year <= max_year,
+         instance_year >= min_year),
+  nomatch = NA,
+  mult = "all"
+]
+
+left = left[!is.na(instance_leaid)] # Dropping rows that have zero past instances
+left = left[instance_leaid != leaid] # Removing instances where the district itself wins here 
+N_past_winning_refs_dat = left[,.(past_unique_winning_ref_districts = uniqueN(instance_leaid),
+                                  past_avg_winning_margin_districts = mean(instance_centered_vote_share)), by = .(leaid, year)]
+
+print(nrow(district_finances))
+district_finances = N_past_winning_refs_dat[
+  district_finances,
+  on = .(leaid = leaid, year = year),
+  nomatch = NA
+] # Merging back onto the main dataframe
+
+
+## Checking the share of districts in the CA that LOST a bond measure within X years
+set_year_past = 3
+
+left = district_finances[,c('leaid','fips','sedacz','year')]
+left[,max_year:= year-1]
+left[,min_year:= year-set_year_past]
+losing_instances = in_bonds[pass == 0,c('leaid','year','fips','sedacz')]
+setnames(losing_instances, 
+         c('leaid','year','fips','sedacz'), 
+         paste0("instance_", c('leaid','year','fips','sedacz')))
+
+print(nrow(left))
+left = losing_instances[
+  left,
+  on = .(instance_sedacz = sedacz,
+         instance_fips = fips,
+         instance_year <= max_year,
+         instance_year >= min_year),
+  nomatch = NA,
+  mult = "all"
+]
+
+left = left[!is.na(instance_leaid)] # Dropping rows that have zero past instances
+N_past_losing_refs_dat = left[,.(past_unique_losing_ref_districts = uniqueN(instance_leaid)), by = .(leaid, year)]
+
+print(nrow(district_finances))
+district_finances = N_past_losing_refs_dat[
+  district_finances,
+  on = .(leaid = leaid, year = year),
+  nomatch = NA
+] # Merging back onto the main dataframe
+
+## Finding the last year of the referendum
+setorder(district_finances, leaid, year)
+events = district_finances[bond_instance == TRUE, .(leaid, event_year = year)]
+district_finances[, year_of_last_ref := { # Imma be so for real this is ChatGPT'd because writing myself was like 20 lines
+  last_year = NA_integer_
+  out = integer(.N)
   
-  n_neighbors=nrow(neighbor_ids)
-  n_past=nrow(unique(neighbor_refs_past, by="leaid"))
-  
-  share_past=n_past/n_neighbors
-  
-  return(share_past)
-}
+  for (i in seq_len(.N)) {
+    out[i] = last_year
+    if (isTRUE(bond_instance[i])) last_year = year[i]
+  }
+  out
+}, by = leaid]
 
 
-# logit prob 
-all_dist_years=expand.grid(na.omit(keep_state_bounds$GEOID), na.omit(in_bonds$year))
-colnames(all_dist_years)=c("leaid", "year")
-gc()
-all_dist_years$dist_year=paste0(all_dist_years$leaid, all_dist_years$year)
-dist_year_propose=unique(subset(in_bonds,!is.na(year) & !is.na(leaid) & 
-                                  leaid %in% keep_state_bounds$GEOID, 
-                                select=c("leaid", "year", "flag")))
-dist_year_propose$dist_year=paste0(dist_year_propose$leaid, dist_year_propose$year)
+###################
+## Analysis Code ##
+###################
+#### Create the Analysis Dataframe
+analysis_dat = district_finances
+setorder(analysis_dat, leaid, year)
 
-all_dist_years$flag=ifelse(all_dist_years$dist_year %chin% dist_year_propose$dist_year,1,0)
+## Keeping data at the state level if we have at least 5 years prior of data 
+min_max_years = district_finances[!is.na(bond_instance), .(
+  min_year = min(year),
+  max_year = max(year)
+),
+by = .(fips)] 
 
-all_dist_years$leaid <- factor(all_dist_years$leaid)
-all_dist_years$STATEFP=substr(all_dist_years$leaid,1,2)
+analysis_dat = min_max_years[
+  district_finances,
+  on = .(fips),
+  nomatch = NA
+] 
 
-dist_rownum_xwalk=data.table(subset(ordered_state_bounds, select=c("row_number", "STATEFP", "GEOID")))
-setnames(dist_rownum_xwalk, "GEOID", "leaid")
-dist_years_numbered=merge(all_dist_years,dist_rownum_xwalk, by=c("STATEFP", "leaid"))
+analysis_dat = analysis_dat[(year >= min_year + 5) & (year <= max_year)]
+
+## Replacing NAs with zeros (this should be correct since I remove years without ish)
+analysis_dat[is.na(bond_count), bond_count:=0]
+analysis_dat[is.na(bond_instance), bond_instance:=0]
+analysis_dat[is.na(past_unique_ref_districts), past_unique_ref_districts:=0]
+analysis_dat[is.na(past_unique_winning_ref_districts), past_unique_winning_ref_districts:=0]
+analysis_dat[is.na(past_unique_losing_ref_districts), past_unique_losing_ref_districts:=0]
+
+## Removing districts where I do not know the commuting zone
+analysis_dat = analysis_dat[!is.na(sedacz)]
+
+#### Creating variables
+## Misc.
+analysis_dat[, share_past_ref := past_unique_ref_districts/n_in_cz]
+analysis_dat[, share_past_losing_ref := past_unique_losing_ref_districts/n_in_cz]
+analysis_dat[, share_past_winning_ref := past_unique_winning_ref_districts/n_in_cz]
+analysis_dat[, cz_combined := paste0(fips,"_",sedacz)]
+analysis_dat[,rev_state_total := rev_state_total/1000000]
+analysis_dat[,rev_local_total := rev_local_total/1000000]
+
+## Pulling the last 
+analysis_dat[,first_ref := (bond_instance == 1)*is.na(year_of_last_ref)]
+analysis_dat[,years_since_last_ref:= year - year_of_last_ref]
+analysis_dat[,recent_ref := years_since_last_ref >= 3]
+analysis_dat[is.na(recent_ref),recent_ref := 0]
+
+check = analysis_dat[, c('year', 'leaid', 'bond_instance', 'first_ref', 'year_of_last_ref')]
 
 
-share_all_dist_ref_past_list=lapply(1:nrow(dist_years_numbered),function(i) share_neighbor_ref_past(dist_years_numbered$year[i], dist_years_numbered$row_number[i],
-                          dist_years_numbered$STATEFP[i]))
+#### Regression lol
+summary(felm(bond_instance ~ 
+               share_past_ref + 
+               share_past_winning_ref + 
+               recent_ref + 
+               rev_state_total +
+               rev_local_total
+             | year + leaid, analysis_dat)) 
 
-dist_years_numbered$share_ref_past=unlist(share_all_dist_ref_past_list)
 
-write.table(dist_years_numbered, "~/school_ref/logit_data.txt", colnames=F)
 
-logit <- glm(flag ~ year + share_ref_past, data = dist_years_numbered, family = "binomial")
-summary(logit)
+

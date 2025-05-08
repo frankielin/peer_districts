@@ -27,4 +27,6 @@ data <- get_education_data(level = "school-districts",
 ############
 ## Export ##
 ############
+## Missing data from 1992 to 1993
+## Data stops at 2020
 write.csv(data,"../data/UI_district_finances.csv", row.names = FALSE)

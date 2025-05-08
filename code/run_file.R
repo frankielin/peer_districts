@@ -3,22 +3,22 @@
 # reads in raw Wisconsin referendum data and outputs seperate csv files for
 # operational ref, capital ref, and all ref.
 # i've already uploaded these cleaned csv files so you don't actually have to run this
-source(referenda_cleaning.R)
+source('./referenda_cleaning.R')
 
 ## Pull school finance data from Urban Institute
 source("./load_finances.R")
 
 # RD and probit just for Wisconsin ref
-source(wi_ref_analysis.R)
+source('./wi_ref_analysis.R')
 
 # RD for capital bonds from Biasi, La Fortune, Schonholzer (2024)
 # the vote margin here is incorrect, need to change vote margin for states 
 # in years with super majority requirements. Online appendix fig A2 has a map of thresholds
-source(cap_bonds_analysis.R)
-
+source('./cap_bonds_analysis.R')
 
 # use commute zone definition of neighbors
-source(seda_cz_analysis.R)
+source('./seda_cz_analysis.R')
+
 # DON'T RUN!
 # logit of propbaility of own proposal on share of neioghbors who passed in the last few years.
 # written to run on slurm, still takes forever, defineilty needs to be written more efficiently. 
