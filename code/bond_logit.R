@@ -249,7 +249,15 @@ analysis_dat[, share_past_winning_ref := past_unique_winning_ref_districts/n_in_
 analysis_dat[, cz_combined := paste0(fips,"_",sedacz)]
 analysis_dat[,rev_state_total := rev_state_total/1000000]
 analysis_dat[,rev_local_total := rev_local_total/1000000]
+analysis_dat[,rev_total := rev_total/1000000]
 analysis_dat[,exp_total := exp_total/1000000]
+
+## Lagged Financials
+analysis_dat[, c("rev_total_l", "exp_total_l", "enrollment_l") :=  shift(.SD), by=leaid, .SDcols=c("rev_total", "exp_total", "enrollment_fall_responsible")]
+# percent change
+analysis_dat[enrollment_l>0, change_enroll := (enrollment_fall_responsible - enrollment_l) / enrollment_l]
+analysis_dat[rev_total_l>0, change_rev := (rev_total - rev_total_l)/ rev_total_l]
+analysis_dat[exp_total_l>0, change_exp := (exp_total - exp_total_l)/ exp_total_l]
 
 ## Pulling the last 
 analysis_dat[,first_ref := (bond_instance == 1)*is.na(year_of_last_ref)]
@@ -267,9 +275,10 @@ summary(felm(bond_instance ~
                recent_ref + 
                rev_state_total +
                rev_local_total + 
-               exp_total
-             | year + leaid, analysis_dat)) 
-
-
+               exp_total  +
+               change_enroll +
+               change_rev +
+               change_exp
+             | year + leaid, analysis_dat))
 
 
