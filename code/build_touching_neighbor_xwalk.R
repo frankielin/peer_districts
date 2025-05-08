@@ -40,13 +40,3 @@ all_neighbors=rbindlist(all_neighbors_list)
 colnames(all_neighbors)=c("leaid", "neighbor_leaid")
 write.csv(all_neighbors, "data/touching_districts.csv",row.names = F)
 
-in_bonds$flag=1
-in_bonds[, prop_per_year:=sum(flag), by="year"]
-in_bonds[, pass_per_year:=sum(pass, na.rm=T), by="year"]
-in_bonds[, amount_per_year:=sum(amount, na.rm=T), by="year"]
-
-plot_data=unique(subset(in_bonds,year>=1990 & year<2020, select = c("year", "prop_per_year", "pass_per_year", "amount_per_year")))
-
-ggplot(plot_data, aes(x=year, y=prop_per_year))+geom_line()
-ggplot(plot_data, aes(x=year, y=pass_per_year))+geom_line()
-ggplot(plot_data, aes(x=year, y=amount_per_year))+geom_line()
