@@ -3,8 +3,8 @@ library(data.table)
 library(stringr)
 library(ggplot2)
 
-in_bonds=fread("data/referendum/bonds_biasi.csv")
-leaid_bounds=read_sf("data/us_district_shapefile/schooldistrict_sy1718_tl18.shp")
+in_bonds=fread("../data/referendum/bonds_biasi.csv")
+leaid_bounds=read_sf("../data/us_district_shapefile/schooldistrict_sy1718_tl18.shp")
 
 in_bonds[,leaid:=str_pad(leaid, 7, "left", "0")]
 in_bonds[, STATEFP:=substr(leaid, 1,2)]
@@ -38,5 +38,5 @@ function(x) single_dist_neighbors(ordered_state_bounds$GEOID[x], ordered_state_b
 
 all_neighbors=rbindlist(all_neighbors_list)
 colnames(all_neighbors)=c("leaid", "neighbor_leaid")
-write.csv(all_neighbors, "data/touching_districts.csv",row.names = F)
+write.csv(all_neighbors, "../data/touching_districts.csv",row.names = F)
 

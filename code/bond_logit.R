@@ -11,6 +11,7 @@ library(tidyr)
 library(foreach)
 library(doParallel)
 library(lfe)
+library(stargazer)
 
 ##################
 ## Loading Data ##
@@ -27,6 +28,9 @@ leaid_bounds=read_sf("../data/referendum/us_district_shapefile") # Loading overa
 
 ## Loading district finance data 
 district_finances = fread("../data/UI_district_finances.csv")
+
+## Loading district crosswalk data 
+touching_districts=fread("../data/referendum/touching_districts.csv")
 
 ###################
 ## Cleaning Data ##
@@ -67,6 +71,9 @@ by = .(leaid, year)
 ]
 
 
+#######################################
+## CREATING COMMUTING ZONE DATAFRAME ##
+#######################################
 #### CREATE Base Dataframe Creation base dataframe should be all the 
 ## Filtering district finance data with data that are available for
 states_in_bonds = unique(in_bonds[,state_fips])
@@ -117,6 +124,7 @@ left = instances[
 ]
 
 left = left[!is.na(instance_leaid)] # Dropping rows that have zero past instances
+left = left[instance_leaid != leaid] # Removing instances where the district itself wins here 
 N_past_refs_dat = left[,.(past_unique_ref_districts = uniqueN(instance_leaid)), by = .(leaid, year)]
 
 print(nrow(district_finances))
@@ -187,6 +195,7 @@ left = losing_instances[
 ]
 
 left = left[!is.na(instance_leaid)] # Dropping rows that have zero past instances
+left = left[instance_leaid != leaid] # Removing instances where the district itself wins here 
 N_past_losing_refs_dat = left[,.(past_unique_losing_ref_districts = uniqueN(instance_leaid)), by = .(leaid, year)]
 
 print(nrow(district_finances))
@@ -211,6 +220,82 @@ district_finances[, year_of_last_ref := { # Imma be so for real this is ChatGPT'
 }, by = leaid]
 
 
+#######################################
+## Neighbors processing and Cleaning ##
+#######################################
+#### Brute Force Implementation
+## For every year, I want to just cerge on the total number of forward looking referendum
+min_year = min(in_bonds[, year] , na.rm = TRUE)
+max_year = max(in_bonds[, year] , na.rm = TRUE)
+
+years = min_year:max_year
+
+## Creating a variable counting the number of possible neighbors
+tot_neighbors_dat = touching_districts[,.(N_neighbors = .N), by = .(leaid)]
+
+## Creating expanded dataset with the set number of
+expanded_dat = touching_districts[, .(year = years), by = .(leaid, neighbor_leaid)]
+expanded_dat[, merge_year_start := year -3 ]
+expanded_dat[, merge_year_end   := year -1 ]
+
+to_merge_bond_instances = in_bonds[,c('leaid', 'year', 'id', 'pass')] # these are the set of bonds that I care about at all
+setnames(to_merge_bond_instances,
+         old = c("leaid", "year"),
+         new = c("leaid_instance", "year_instance"))
+
+nrow(expanded_dat)
+expanded_dat[, leaid := sprintf("%07d", as.integer(leaid))]
+expanded_dat[, neighbor_leaid := sprintf("%07d", as.integer(neighbor_leaid))]
+expanded_dat = to_merge_bond_instances[
+  expanded_dat,
+  on = .(leaid_instance = neighbor_leaid,
+         year_instance >= merge_year_start,
+         year_instance <= merge_year_end),
+  nomatch = NA,
+  mult = "all"
+]
+
+
+setnames(expanded_dat,
+         old = c("leaid_instance"),
+         new = c("neighbor_leaid")) ## So then I wanna collapse on this and the year
+
+## Keeping observations with an instance
+expanded_dat  = expanded_dat[!is.na(id)] # this means that there was at least a merged deal
+
+nrow(expanded_dat)
+expanded_dat  = expanded_dat[neighbor_leaid!=leaid] # This should drop nothing
+nrow(expanded_dat)
+
+## Collapsing Data by the 
+expanded_dat <- expanded_dat[,
+                             .(neighbor_winner = max(pass)),
+                             by = .(leaid, neighbor_leaid, year)]
+
+## Collapsing and calculating the unique neighbors that are considered for a neighbor in the future year
+neighbors_ref_merge_dat = expanded_dat[,
+                                       .(N_ref_past_districts_neighbors = uniqueN(neighbor_leaid),
+                                         N_win_past_districts_neighbors = sum(neighbor_winner)),
+                                       by = .(leaid, year)] # in this case everything should be strictly larger than 1
+
+## Creating a datframe that just tells us the number of total neighbors
+tot_neighbors_dat = touching_districts[,.(N_neighbors = .N), by = .(leaid)]
+tot_neighbors_dat[,leaid := sprintf("%07d", as.integer(leaid))]
+
+## Merging onto Dataframe
+district_finances <- merge(district_finances, neighbors_ref_merge_dat, 
+                           by = c('leaid', 'year'), all.x = TRUE)
+
+district_finances <- merge(district_finances, tot_neighbors_dat, 
+                           by = c('leaid'), all.x = TRUE)
+
+district_finances[is.na(N_ref_past_districts_neighbors) & (!is.na(N_neighbors)), N_ref_past_districts_neighbors := 0]
+district_finances[is.na(N_ref_past_districts_neighbors) & (!is.na(N_neighbors)), N_win_past_districts_neighbors := 0]
+
+nrow(district_finances[is.na(N_neighbors)]) ## Have Rachel check this please?
+
+nrow(district_finances[is.na(n_in_cz)])
+
 ###################
 ## Analysis Code ##
 ###################
@@ -232,6 +317,8 @@ analysis_dat = min_max_years[
 ] 
 
 analysis_dat = analysis_dat[(year >= min_year + 5) & (year <= max_year)]
+# analysis_dat = analysis_dat[min_year <= 1998]
+# analysis_dat = analysis_dat[year >= 2009]
 
 ## Replacing NAs with zeros (this should be correct since I remove years without ish)
 analysis_dat[is.na(bond_count), bond_count:=0]
@@ -244,18 +331,26 @@ analysis_dat[is.na(past_unique_losing_ref_districts), past_unique_losing_ref_dis
 analysis_dat = analysis_dat[!is.na(sedacz)]
 
 #### Creating variables
-## Misc.
-analysis_dat[, share_past_ref := past_unique_ref_districts/n_in_cz]
-analysis_dat[, share_past_losing_ref := past_unique_losing_ref_districts/n_in_cz]
-analysis_dat[, share_past_winning_ref := past_unique_winning_ref_districts/n_in_cz]
+## Creating Data for CZ
+analysis_dat[, share_past_ref := past_unique_ref_districts/(n_in_cz-1)]
+analysis_dat[, share_past_losing_ref := past_unique_losing_ref_districts/(n_in_cz-1)]
+analysis_dat[, share_past_winning_ref := past_unique_winning_ref_districts/(n_in_cz-1)]
+
+## Creating Data for neighbors
+analysis_dat[, share_past_ref_neighbors := N_ref_past_districts_neighbors/(N_neighbors)]
+analysis_dat[, share_past_winning_ref_neighbors := N_win_past_districts_neighbors/(N_neighbors)]
+
+## All things that are important
 analysis_dat[, cz_combined := paste0(fips,"_",sedacz)]
 analysis_dat[, year_state:= paste0(fips, year) ]
-analysis_dat[,rev_state_total := rev_state_total/1000000]
-analysis_dat[,rev_local_total := rev_local_total/1000000]
-analysis_dat[,exp_total := exp_total/1000000]
-analysis_dat[,salaries_total := salaries_total/1000000]
+analysis_dat[,rev_state_total := rev_state_total/100000000]
+analysis_dat[,rev_local_total := rev_local_total/100000000]
+analysis_dat[,exp_total := exp_total/100000000]
+analysis_dat[,salaries_total := salaries_total/100000000]
 
-## Pulling the last 
+
+
+## Creating a variable if this a recent referendum (less than or equal to 3 years)
 analysis_dat[,first_ref := (bond_instance == 1)*is.na(year_of_last_ref)]
 analysis_dat[,years_since_last_ref:= year - year_of_last_ref]
 analysis_dat[,recent_ref := years_since_last_ref >= 3]
@@ -263,20 +358,62 @@ analysis_dat[is.na(recent_ref),recent_ref := 0]
 
 check = analysis_dat[, c('year', 'leaid', 'bond_instance', 'first_ref', 'year_of_last_ref')]
 
+# analysis_dat = analysis_dat[fips != "06"]
+
+
+checker = analysis_dat[is.na(share_past_winning_ref)]
+checker = analysis_dat[is.na(share_past_winning_ref_neighbors)]
+nrow(checker)
+
+analysis_dat = analysis_dat[!is.na(share_past_winning_ref) ]
+
+
 
 
 #### Regression lol
-summary(felm(bond_instance ~ 
-               past_unique_ref_districts + 
+## CZ
+out_cz <- felm(bond_instance ~ 
                share_past_winning_ref + 
+               past_unique_ref_districts + 
                recent_ref + 
                rev_state_total +
                rev_local_total + 
-               exp_total + 
-               salaries_total
-             | year_state + leaid, data = analysis_dat )
-        ) 
+               exp_total+
+              enrollment_fall_responsible
+             | year_state + leaid | 0 | leaid, data = analysis_dat)
+         
+summary(out_cz)
+
+## Neighbors 
+out_neighbors <- felm(bond_instance ~ 
+              share_past_winning_ref_neighbors + 
+              N_ref_past_districts_neighbors + 
+              recent_ref + 
+              rev_state_total +
+              rev_local_total + 
+              exp_total +
+              enrollment_fall_responsible
+            | year_state + leaid | 0 | leaid, data = analysis_dat)
+
+summary(out_neighbors)
+
+a = sum(analysis_dat$bond_instance)
+b = length(!is.na(analysis_dat$bond_instance))
+a/b
+
+summary(analysis_dat[,share_past_ref])
+summary(analysis_dat[,share_past_winning_ref])
+
+stargazer(out_cz, out_neighbors)
 
 
-colnames(analysis_dat)
+
+# 
+# stargazer(out)
+# 
+# colnames(analysis_dat)
+
+unique(analysis_dat$fips)
+
+unique(analysis_dat$fips[analysis_dat$min_year < 1995])
 
