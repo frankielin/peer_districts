@@ -347,7 +347,7 @@ analysis_dat[,rev_state_total := rev_state_total/100000000]
 analysis_dat[,rev_local_total := rev_local_total/100000000]
 analysis_dat[,exp_total := exp_total/100000000]
 analysis_dat[,salaries_total := salaries_total/100000000]
-
+analysis_dat[,enrollment_fall_responsible := enrollment_fall_responsible/1000]
 
 
 ## Creating a variable if this a recent referendum (less than or equal to 3 years)
@@ -358,16 +358,12 @@ analysis_dat[is.na(recent_ref),recent_ref := 0]
 
 check = analysis_dat[, c('year', 'leaid', 'bond_instance', 'first_ref', 'year_of_last_ref')]
 
-# analysis_dat = analysis_dat[fips != "06"]
-
 
 checker = analysis_dat[is.na(share_past_winning_ref)]
 checker = analysis_dat[is.na(share_past_winning_ref_neighbors)]
 nrow(checker)
 
-analysis_dat = analysis_dat[!is.na(share_past_winning_ref) ]
-
-
+analysis_dat = analysis_dat[!is.na(share_past_winning_ref) & !is.na(share_past_winning_ref_neighbors)]
 
 
 #### Regression lol
