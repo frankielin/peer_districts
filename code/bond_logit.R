@@ -29,6 +29,9 @@ leaid_bounds=read_sf("../data/referendum/us_district_shapefile") # Loading overa
 ## Loading district finance data 
 district_finances = fread("../data/UI_district_finances.csv")
 
+## Loading SAIPES Data 
+district_saipe=fread("../data/UI_district_sapie.csv")
+
 ## Loading district crosswalk data 
 touching_districts=fread("../data/referendum/touching_districts.csv")
 
@@ -71,6 +74,36 @@ by = .(leaid, year)
 ]
 
 
+#### SAPIE Data (Poverty Stats)
+## Removing DC and Hawaii
+bad_states = c(11, 15)
+district_saipe = district_saipe[!(fips%in%bad_states) ]
+
+## Measuring the Average Poverty Rate Throughout the Years
+average_poverty_dat = district_saipe[, # maybe filter for certain years here might be good to do? Or I can let it vary year by year
+                                 .(avg_poverty_pct = mean(est_population_5_17_poverty_pct), na.rm = TRUE), 
+                                 by = .(leaid, fips) ]  # I dont think that the poverty quantile should really change year to year 
+
+## Calculating different quantiles of the poverty rates 
+average_poverty_dat[, poverty_qtile := cut(avg_poverty_pct,
+                                       breaks = quantile(avg_poverty_pct, probs = seq(0, 1, 0.2), na.rm = TRUE),
+                                       include.lowest = TRUE,
+                                       labels = FALSE),
+                by = fips]
+
+average_poverty_dat[, poverty_dtile := cut(avg_poverty_pct,
+                                           breaks = quantile(avg_poverty_pct, probs = seq(0, 1, 0.1), na.rm = TRUE),
+                                           include.lowest = TRUE,
+                                           labels = FALSE),
+                    by = fips]
+
+average_poverty_dat = average_poverty_dat[,c('leaid', 'avg_poverty_pct', 'poverty_qtile', 'poverty_dtile')]
+
+average_poverty_dat[, leaid := sprintf("%07d", as.integer(leaid))]
+
+table(is.na(average_poverty_dat$poverty_qtile)) 
+table(is.na(average_poverty_dat$poverty_dtile)) 
+
 #######################################
 ## CREATING COMMUTING ZONE DATAFRAME ##
 #######################################
@@ -79,6 +112,10 @@ by = .(leaid, year)
 states_in_bonds = unique(in_bonds[,state_fips])
 district_finances[,fips:=sprintf("%02d", as.integer(fips))] # rename fips into the two digit state fips 
 district_finances = district_finances[.(states_in_bonds), on = .(fips)] # Filters (binary search bitches)
+
+## Merging poverty data
+district_finances <- merge(district_finances, average_poverty_dat, by = 'leaid',  all.x = TRUE)
+table(is.na(district_finances$poverty_qtile)) ## Some of this is just flat missing from the data 
 
 ## Merging on bond data 
 print(paste("Pre-merge rows:", nrow(district_finances)))
@@ -290,14 +327,16 @@ district_finances <- merge(district_finances, tot_neighbors_dat,
                            by = c('leaid'), all.x = TRUE)
 
 district_finances[is.na(N_ref_past_districts_neighbors) & (!is.na(N_neighbors)), N_ref_past_districts_neighbors := 0]
-district_finances[is.na(N_ref_past_districts_neighbors) & (!is.na(N_neighbors)), N_win_past_districts_neighbors := 0]
+district_finances[is.na(N_win_past_districts_neighbors) & (!is.na(N_neighbors)), N_win_past_districts_neighbors := 0]
 
 nrow(district_finances[is.na(N_neighbors)]) ## Have Rachel check this please?
 
 nrow(district_finances[is.na(n_in_cz)])
 
+table(is.na(district_finances[,N_neighbors]))
+
 ###################
-## Analysis Code ##
+## Analysis Data ##
 ###################
 #### Create the Analysis Dataframe
 analysis_dat = district_finances
@@ -323,7 +362,7 @@ analysis_dat = analysis_dat[(year >= min_year + 5) & (year <= max_year)]
 ## Replacing NAs with zeros (this should be correct since I remove years without ish)
 analysis_dat[is.na(bond_count), bond_count:=0]
 analysis_dat[is.na(bond_instance), bond_instance:=0]
-analysis_dat[is.na(past_unique_ref_districts), past_unique_ref_districts:=0]
+analysis_dat[is.na(past_unique_ref_districts), past_unique_ref_districts := 0]
 analysis_dat[is.na(past_unique_winning_ref_districts), past_unique_winning_ref_districts:=0]
 analysis_dat[is.na(past_unique_losing_ref_districts), past_unique_losing_ref_districts:=0]
 
@@ -343,6 +382,7 @@ analysis_dat[, share_past_winning_ref_neighbors := N_win_past_districts_neighbor
 ## All things that are important
 analysis_dat[, cz_combined := paste0(fips,"_",sedacz)]
 analysis_dat[, year_state:= paste0(fips, year) ]
+analysis_dat[, year_cz:= paste0(cz_combined, year) ]
 analysis_dat[,rev_state_total := rev_state_total/100000000]
 analysis_dat[,rev_local_total := rev_local_total/100000000]
 analysis_dat[,exp_total := exp_total/100000000]
@@ -360,13 +400,18 @@ check = analysis_dat[, c('year', 'leaid', 'bond_instance', 'first_ref', 'year_of
 
 
 checker = analysis_dat[is.na(share_past_winning_ref)]
+nrow(checker)
 checker = analysis_dat[is.na(share_past_winning_ref_neighbors)]
+nrow(checker)
+checker = analysis_dat[is.na(N_neighbors)]
 nrow(checker)
 
 analysis_dat = analysis_dat[!is.na(share_past_winning_ref) & !is.na(share_past_winning_ref_neighbors)]
 
 
-#### Regression lol
+##########################
+## BASELINE REGRESSIONS ##
+##########################
 ## CZ
 out_cz <- felm(bond_instance ~ 
                share_past_winning_ref + 
@@ -393,24 +438,162 @@ out_neighbors <- felm(bond_instance ~
 
 summary(out_neighbors)
 
-a = sum(analysis_dat$bond_instance)
-b = length(!is.na(analysis_dat$bond_instance))
-a/b
-
-summary(analysis_dat[,share_past_ref])
-summary(analysis_dat[,share_past_winning_ref])
-
 stargazer(out_cz, out_neighbors)
 
+baseline_referendum_rate = mean(analysis_dat[,bond_instance])
+baseline_referendum_rate
+
+##############################
+## HETEROGENITY REGRESSIONS ##
+##############################
+## Checking my coverage for the heterogeneity analysis 
+table(analysis_dat[,poverty_qtile]) # we are slightly more over represented by higher poverty districts
+table(is.na(analysis_dat[,poverty_qtile])) # Okay so we aren't missing any
+
+analysis_dat[, poverty_qtile_1_share_past_winning_ref := (poverty_qtile == 1) * share_past_winning_ref]
+analysis_dat[, poverty_qtile_2_share_past_winning_ref := (poverty_qtile == 2) * share_past_winning_ref]
+analysis_dat[, poverty_qtile_3_share_past_winning_ref := (poverty_qtile == 3) * share_past_winning_ref]
+analysis_dat[, poverty_qtile_4_share_past_winning_ref := (poverty_qtile == 4) * share_past_winning_ref]
+analysis_dat[, poverty_qtile_5_share_past_winning_ref := (poverty_qtile == 5) * share_past_winning_ref]
+
+analysis_dat[, poverty_qtile_1_share_past_winning_ref_neighbors := (poverty_qtile == 1) * share_past_winning_ref_neighbors]
+analysis_dat[, poverty_qtile_2_share_past_winning_ref_neighbors := (poverty_qtile == 2) * share_past_winning_ref_neighbors]
+analysis_dat[, poverty_qtile_3_share_past_winning_ref_neighbors := (poverty_qtile == 3) * share_past_winning_ref_neighbors]
+analysis_dat[, poverty_qtile_4_share_past_winning_ref_neighbors := (poverty_qtile == 4) * share_past_winning_ref_neighbors]
+analysis_dat[, poverty_qtile_5_share_past_winning_ref_neighbors := (poverty_qtile == 5) * share_past_winning_ref_neighbors]
+
+table(analysis_dat[,poverty_dtile]) # we are slightly more over represented by higher poverty districts
+table(is.na(analysis_dat[,poverty_dtile])) # Okay so we aren't missing any
+
+analysis_dat[, poverty_dtile_1_share_past_winning_ref := (poverty_dtile == 1) * share_past_winning_ref]
+analysis_dat[, poverty_dtile_2_share_past_winning_ref := (poverty_dtile == 2) * share_past_winning_ref]
+analysis_dat[, poverty_dtile_3_share_past_winning_ref := (poverty_dtile == 3) * share_past_winning_ref]
+analysis_dat[, poverty_dtile_4_share_past_winning_ref := (poverty_dtile == 4) * share_past_winning_ref]
+analysis_dat[, poverty_dtile_5_share_past_winning_ref := (poverty_dtile == 5) * share_past_winning_ref]
+analysis_dat[, poverty_dtile_6_share_past_winning_ref := (poverty_dtile == 6) * share_past_winning_ref]
+analysis_dat[, poverty_dtile_7_share_past_winning_ref := (poverty_dtile == 7) * share_past_winning_ref]
+analysis_dat[, poverty_dtile_8_share_past_winning_ref := (poverty_dtile == 8) * share_past_winning_ref]
+analysis_dat[, poverty_dtile_9_share_past_winning_ref := (poverty_dtile == 9) * share_past_winning_ref]
+analysis_dat[, poverty_dtile_10_share_past_winning_ref := (poverty_dtile == 10) * share_past_winning_ref]
+
+analysis_dat[, poverty_dtile_1_share_past_winning_ref_neighbors := (poverty_dtile == 1) * share_past_winning_ref_neighbors]
+analysis_dat[, poverty_dtile_2_share_past_winning_ref_neighbors := (poverty_dtile == 2) * share_past_winning_ref_neighbors]
+analysis_dat[, poverty_dtile_3_share_past_winning_ref_neighbors := (poverty_dtile == 3) * share_past_winning_ref_neighbors]
+analysis_dat[, poverty_dtile_4_share_past_winning_ref_neighbors := (poverty_dtile == 4) * share_past_winning_ref_neighbors]
+analysis_dat[, poverty_dtile_5_share_past_winning_ref_neighbors := (poverty_dtile == 5) * share_past_winning_ref_neighbors]
+analysis_dat[, poverty_dtile_6_share_past_winning_ref_neighbors := (poverty_dtile == 6) * share_past_winning_ref_neighbors]
+analysis_dat[, poverty_dtile_7_share_past_winning_ref_neighbors := (poverty_dtile == 7) * share_past_winning_ref_neighbors]
+analysis_dat[, poverty_dtile_8_share_past_winning_ref_neighbors := (poverty_dtile == 8) * share_past_winning_ref_neighbors]
+analysis_dat[, poverty_dtile_9_share_past_winning_ref_neighbors := (poverty_dtile == 9) * share_past_winning_ref_neighbors]
+analysis_dat[, poverty_dtile_10_share_past_winning_ref_neighbors := (poverty_dtile == 10) * share_past_winning_ref_neighbors]
+
+## Commuting Zones
+out_cz <- felm(bond_instance ~
+                 poverty_dtile_2_share_past_winning_ref +
+                 poverty_dtile_3_share_past_winning_ref +
+                 poverty_dtile_4_share_past_winning_ref +
+                 poverty_dtile_5_share_past_winning_ref +
+                 poverty_dtile_6_share_past_winning_ref +
+                 poverty_dtile_7_share_past_winning_ref +
+                 poverty_dtile_8_share_past_winning_ref +
+                 poverty_dtile_9_share_past_winning_ref +
+                 poverty_dtile_10_share_past_winning_ref +
+                 share_past_winning_ref +
+                 past_unique_ref_districts +
+                 recent_ref +
+                 rev_state_total +
+                 rev_local_total +
+                 exp_total+
+                 enrollment_fall_responsible
+               | year_state + leaid | 0 | leaid, data = analysis_dat)
+
+summary(out_cz)
+
+out_cz <- felm(bond_instance ~ 
+                 poverty_qtile_2_share_past_winning_ref +
+                 poverty_qtile_3_share_past_winning_ref +
+                 poverty_qtile_4_share_past_winning_ref +
+                 poverty_qtile_5_share_past_winning_ref +
+                 share_past_winning_ref +
+                 past_unique_ref_districts + 
+                 recent_ref + 
+                 rev_state_total +
+                 rev_local_total + 
+                 exp_total+
+                 enrollment_fall_responsible
+               | year_state + leaid | 0 | leaid, data = analysis_dat)
+
+summary(out_cz)
+
+## Extract coefficients from the out_cz model
+coef_cz <- as.data.table(summary(out_cz)$coefficients, keep.rownames = "term")
+coef_cz <- coef_cz[term %like% "poverty_qtile_"]
+coef_cz[, qt := 2:5]
+coef_cz[, model := "Commuting Zone"]
+coef_cz[, ci_lower := Estimate - 1.96 * `Cluster s.e.`]
+coef_cz[, ci_upper := Estimate + 1.96 * `Cluster s.e.`]
+
+## Non Commuting Zones
+out_neighbors <- felm(bond_instance ~
+                        poverty_dtile_2_share_past_winning_ref_neighbors +
+                        poverty_dtile_3_share_past_winning_ref_neighbors +
+                        poverty_dtile_4_share_past_winning_ref_neighbors +
+                        poverty_dtile_5_share_past_winning_ref_neighbors +
+                        poverty_dtile_6_share_past_winning_ref_neighbors +
+                        poverty_dtile_7_share_past_winning_ref_neighbors +
+                        poverty_dtile_8_share_past_winning_ref_neighbors +
+                        poverty_dtile_9_share_past_winning_ref_neighbors +
+                        poverty_dtile_10_share_past_winning_ref_neighbors +
+                        share_past_winning_ref_neighbors +
+                        N_ref_past_districts_neighbors +
+                        recent_ref +
+                        rev_state_total +
+                        rev_local_total +
+                        exp_total +
+                        enrollment_fall_responsible
+                      | year_state + leaid | 0 | leaid, data = analysis_dat)
+
+summary(out_neighbors)
+
+out_neighbors <- felm(bond_instance ~ 
+                        poverty_qtile_2_share_past_winning_ref_neighbors + 
+                        poverty_qtile_3_share_past_winning_ref_neighbors + 
+                        poverty_qtile_4_share_past_winning_ref_neighbors + 
+                        poverty_qtile_5_share_past_winning_ref_neighbors + 
+                        share_past_winning_ref_neighbors +
+                        N_ref_past_districts_neighbors + 
+                        recent_ref + 
+                        rev_state_total +
+                        rev_local_total + 
+                        exp_total +
+                        enrollment_fall_responsible
+                      | year_state + leaid | 0 | leaid, data = analysis_dat)
+
+summary(out_neighbors)
 
 
-# 
-# stargazer(out)
-# 
-# colnames(analysis_dat)
 
-unique(analysis_dat$fips)
+## Extract coefficients from the out_neighbors model
+coef_neighbors <- as.data.table(summary(out_neighbors)$coefficients, keep.rownames = "term")
+coef_neighbors <- coef_neighbors[term %like% "poverty_qtile_"]
+coef_neighbors[, qt := 2:5]
+coef_neighbors[, model := "Bordering"]
+coef_neighbors[, ci_lower := Estimate - 1.96 * `Cluster s.e.`]
+coef_neighbors[, ci_upper := Estimate + 1.96 * `Cluster s.e.`]
 
-unique(analysis_dat$fips[analysis_dat$min_year < 1995])
 
-asd
+## Creating plots 
+coef_all <- rbind(coef_cz, coef_neighbors)
+
+hetero_plot <- ggplot(coef_all, aes(x = factor(qt), y = Estimate, color = model, shape = model)) +
+  geom_point(position = position_dodge(width = 0.4), size = 3) +
+  geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
+                width = 0.2, position = position_dodge(width = 0.4)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  labs(x = "Poverty Quantile", y = "Coefficient Estimate",
+       color = "Model", shape = "Model") +
+  theme_minimal()
+
+hetero_plot
+
+ggsave(paste0("../figs/hetero_plot.png"),plot = hetero_plot, width = 8, height = 4, dpi = 300)

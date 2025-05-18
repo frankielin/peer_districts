@@ -195,7 +195,7 @@ bonds_cz[, centered_vote_share:=vote_share-votesharereqd]
 ## Merge checking from my data 
 nrow(bonds_cz)
 bonds_cz <- merge(bonds_cz , tester, by = "id", all.x = TRUE) 
-# bonds_cz[is.na(share_ref_future_TESTER), share_ref_future_TESTER:= 0]
+bonds_cz[is.na(share_ref_future_TESTER), share_ref_future_TESTER:= 0]
 # bonds_cz$diff = abs(bonds_cz$share_ref_future-bonds_cz$share_ref_future_TESTER)
 # summary(bonds_cz$diff)
 # a = bonds_cz[diff>0]
@@ -228,7 +228,7 @@ run_resid_binscatter = 1
 analysis_dat = bonds_cz[!is.na(centered_vote_share)] # This cuts some observations that we should look at
 analysis_dat = analysis_dat[abs(centered_vote_share)<0.49]
 analysis_dat = analysis_dat[!is.na(N_neighbors)]
-analysis_dat = analysis_dat[!is.na(share_ref_future_TESTER)]
+analysis_dat = analysis_dat[!is.na(share_ref_future_TESTER)] # Keeping the consistent Sample
 # analysis_dat = analysis_dat[share_ref_future_TESTER!= 0]
 analysis_dat = analysis_dat[year > 1990]
 # analysis_dat = analysis_dat[!(state == "CA")]
@@ -274,86 +274,89 @@ if (run_hist == 1) {
 
 
 #### Binscatter
+binscatter_run_types = c("cz", "neighbors")
 if (run_binscatter == 1) {
-  ## Loop and save through each state distinction
-  for (curr_state in states){
-    if (curr_state == "ALL"){ # Keeping all states
-      scatter_dat = analysis_dat
-    } else if (curr_state == "ALL_CORRECTED"){ # Keeping states that I manually select
-      scatter_dat = analysis_dat[!(state %in% c("KS", "MA", 'MD', 'MO', 'NE'))] # NEED TO STILL CHANGE THIS 
-    } else {
-      scatter_dat = analysis_dat[state == curr_state]
+  ## Loop over every type of potential bin scatter "type"
+  for (run_type in binscatter_run_types){
+    if (run_type == "cz"){
+      analysis_dat[, var_interest := share_ref_future_TESTER]
+    } else if (run_type == "neighbors"){
+      analysis_dat[, var_interest := share_ref_future_neighbor]
     }
     
-    ## Creating data for bin scatter
-    below <- scatter_dat[centered_vote_share < 0][order(centered_vote_share)]
-    above <- scatter_dat[centered_vote_share > 0][order(centered_vote_share)]
-    
-    n_rows_below <- nrow(below)
-    n_rows_above <- nrow(above)
-    n_per_bin <- max(min(round(n_rows_above / 15), round(n_rows_below / 15)), 1)
-    
-    # Compute number of bins
-    n_bins_below <- ceiling(n_rows_below / n_per_bin)
-    n_bins_above <- ceiling(n_rows_above / n_per_bin)
-    
-    # Sort by distance from 0 (absolute value), then assign bin index
-    below <- below[order(abs(centered_vote_share))]
-    above <- above[order(abs(centered_vote_share))]
-    
-    # Assign bins: center-outward
-    below[, bin := paste0("L", rep(1:n_bins_below, each = n_per_bin))[1:.N]]
-    above[, bin := paste0("R", rep(1:n_bins_above, each = n_per_bin))[1:.N]]
-    
-    ## Combine and aggregate
-    binned_dat <- rbind(below, above)[
-      , .(
-        centered_vote_share = mean(centered_vote_share, na.rm = TRUE),
-        share_ref_mean = mean(share_ref_future_neighbor, na.rm = TRUE),
-        n = .N
-      ),
-      by = bin
-    ][order(centered_vote_share)]
-    
-    # binned_dat <- rbind(below, above)[
-    #   , .(
-    #     centered_vote_share = mean(centered_vote_share, na.rm = TRUE),
-    #     share_ref_mean = mean(share_ref_future_TESTER, na.rm = TRUE), # this is the difference
-    #     n = .N
-    #   ),
-    #   by = bin
-    # ][order(centered_vote_share)]
-    
-    vote_band_high = 0.05
-    vote_band_low = -1*vote_band_high
-    
-    ## Plot the bin scatter
-    bin_plot <-
-      ggplot(binned_dat, aes(x = centered_vote_share, y = share_ref_mean)) +
-      geom_point() +
-      geom_vline(xintercept = 0, color = "lightcoral", linewidth = 0.3) +
-      labs(
-        x = "Vote Share (Centered)",
-        y = "Share",
-        title = "Binscatter"
-      ) +
-      theme_minimal(base_size = 14) +
-      stat_smooth(data=scatter_dat,
-                  aes(centered_vote_share, share_ref_future_neighbor, group = winner),
-                  method = "lm")
-    
-    # bin_plot <-
-    #   ggplot(binned_dat, aes(x = centered_vote_share, y = share_ref_mean)) +
-    #   geom_point() +
-    #   geom_vline(xintercept = 0, color = "lightcoral", linewidth = 0.3) +
-    #   labs(
-    #     x = "Vote Share (Centered)",
-    #     y = "Share",
-    #     title = "Binscatter"
-    #   )
-    
-    ## Save Data
-    ggsave(paste0("../figs/futher_vote_binscatter_",curr_state,".png"),plot = bin_plot, width = 8, height = 6, dpi = 300)
+    ## Loop and save through each state distinction
+    for (curr_state in states){
+      if (curr_state == "ALL"){ # Keeping all states
+        scatter_dat = analysis_dat
+      } else if (curr_state == "ALL_CORRECTED"){ # Keeping states that I manually select
+        scatter_dat = analysis_dat[!(state %in% c("KS", "MA", 'MD', 'MO', 'NE'))] # NEED TO STILL CHANGE THIS 
+      } else {
+        scatter_dat = analysis_dat[state == curr_state]
+      }
+      
+      ## Creating data for bin scatter
+      below <- scatter_dat[centered_vote_share < 0][order(centered_vote_share)]
+      above <- scatter_dat[centered_vote_share > 0][order(centered_vote_share)]
+      
+      n_rows_below <- nrow(below)
+      n_rows_above <- nrow(above)
+      n_per_bin <- max(min(round(n_rows_above / 15), round(n_rows_below / 15)), 1)
+      
+      # Compute number of bins
+      n_bins_below <- ceiling(n_rows_below / n_per_bin)
+      n_bins_above <- ceiling(n_rows_above / n_per_bin)
+      
+      # Sort by distance from 0 (absolute value), then assign bin index
+      below <- below[order(abs(centered_vote_share))]
+      above <- above[order(abs(centered_vote_share))]
+      
+      # Assign bins: center-outward
+      below[, bin := paste0("L", rep(1:n_bins_below, each = n_per_bin))[1:.N]]
+      above[, bin := paste0("R", rep(1:n_bins_above, each = n_per_bin))[1:.N]]
+      
+      ## Combine and aggregate
+      binned_dat <- rbind(below, above)[
+        , .(
+          centered_vote_share = mean(centered_vote_share, na.rm = TRUE),
+          share_ref_mean = mean(var_interest, na.rm = TRUE),
+          n = .N
+        ),
+        by = bin
+      ][order(centered_vote_share)]
+      
+      
+      vote_band_high = 0.05
+      vote_band_low = -1*vote_band_high
+      
+      ## Plot the bin scatter
+      bin_plot <-
+        ggplot(binned_dat, aes(x = centered_vote_share, y = share_ref_mean)) +
+        geom_point() +
+        geom_vline(xintercept = 0, color = "lightcoral", linewidth = 0.3) +
+        labs(
+          x = "Vote Share (Centered)",
+          y = "Referendum Share"
+        ) 
+      
+      # +
+      #   theme_minimal(base_size = 14) +
+      #   stat_smooth(data=scatter_dat,
+      #               aes(centered_vote_share, var_interest, group = winner),
+      #               method = "lm")
+      
+      # bin_plot <-
+      #   ggplot(binned_dat, aes(x = centered_vote_share, y = share_ref_mean)) +
+      #   geom_point() +
+      #   geom_vline(xintercept = 0, color = "lightcoral", linewidth = 0.3) +
+      #   labs(
+      #     x = "Vote Share (Centered)",
+      #     y = "Share",
+      #     title = "Binscatter"
+      #   )
+      
+      ## Save Data
+      ggsave(paste0("../figs/futher_vote_binscatter_",curr_state,"_",run_type,".png"),plot = bin_plot, width = 8, height = 6, dpi = 300)
+    }
   }
 }
 
@@ -361,84 +364,94 @@ bin_plot
 
 
 #### RESID BINSCATTER
+resid_binscatter_run_types = c("cz", "neighbors")
 if (run_resid_binscatter == 1) {
-  ## Loop and save through each state distinction
-  for (curr_state in states){
-    if (curr_state == "ALL"){ # Keeping all states
-      scatter_dat = analysis_dat
-    } else if (curr_state == "ALL_CORRECTED"){ # Keeping states that I manually select
-      scatter_dat = analysis_dat[!(state %in% c("KS", "MA", 'MD', 'MO', 'NE'))] # NEED TO STILL CHANGE THIS 
-    } else {
-      scatter_dat = analysis_dat[state == curr_state]
+  ## Loop over every type of potential bin scatter "type"
+  for (run_type in binscatter_run_types){
+    if (run_type == "cz"){
+      analysis_dat[, var_interest := share_ref_future_TESTER]
+    } else if (run_type == "neighbors"){
+      analysis_dat[, var_interest := share_ref_future_neighbor]
     }
-    
-    ## Finding the residualized values
-    scatter_dat[,year_state := paste("year", "state")]
-    scatter_dat[,fips_sedacz := paste("fips", "sedacz")]
-    scatter_dat[,zero_ind := (share_ref_future_TESTER == 0)*1]
-    reg_out = felm(share_ref_future_TESTER ~ totvotes | fips_sedacz + year_state, data = scatter_dat)
-    reg_out = felm(share_ref_future_TESTER ~ totvotes | leaid + year_state, data = scatter_dat)
-    scatter_dat[, RESID_share_ref := reg_out$residuals]
-    
-    ## Creating data for bin scatter
-    below <- scatter_dat[centered_vote_share < 0][order(centered_vote_share)]
-    above <- scatter_dat[centered_vote_share > 0][order(centered_vote_share)]
-    
-    n_rows_below <- nrow(below)
-    n_rows_above <- nrow(above)
-    n_per_bin <- max(min(round(n_rows_above / 15), round(n_rows_below / 15)), 1)
-    
-    # Compute number of bins
-    n_bins_below <- ceiling(n_rows_below / n_per_bin)
-    n_bins_above <- ceiling(n_rows_above / n_per_bin)
-    
-    # Sort by distance from 0 (absolute value), then assign bin index
-    below <- below[order(abs(centered_vote_share))]
-    above <- above[order(abs(centered_vote_share))]
-    
-    # Assign bins: center-outward
-    below[, bin := paste0("L", rep(1:n_bins_below, each = n_per_bin))[1:.N]]
-    above[, bin := paste0("R", rep(1:n_bins_above, each = n_per_bin))[1:.N]]
-    
-    # Combine and aggregate
-    # binned_dat <- rbind(below, above)[
-    #   , .(
-    #     centered_vote_share = mean(centered_vote_share, na.rm = TRUE),
-    #     share_ref_mean = mean(share_ref_future_neighbor, na.rm = TRUE),
-    #     n = .N
-    #   ),
-    #   by = bin
-    # ][order(centered_vote_share)]
-    
-    binned_dat <- rbind(below, above)[
-      , .(
-        centered_vote_share = mean(centered_vote_share, na.rm = TRUE),
-        share_ref_mean = mean(RESID_share_ref, na.rm = TRUE), # this is the difference
-        n = .N
-      ),
-      by = bin
-    ][order(centered_vote_share)]
-    
-    vote_band_high = 0.05
-    vote_band_low = -1*vote_band_high
-    
-    ## Plot the bin scatter
-    resid_bin_plot <-
-      ggplot(binned_dat, aes(x = centered_vote_share, y = share_ref_mean)) +
-      geom_point() +
-      geom_vline(xintercept = 0, color = "lightcoral", linewidth = 0.3) +
-      labs(
-        x = "Vote Share (Centered)",
-        y = "Resid. Share",
-        title = "Binscatter"
-      ) +
-      theme_minimal(base_size = 14) +
-      stat_smooth(data=scatter_dat,
-                  aes(centered_vote_share, RESID_share_ref, group = winner),
-                  method = "lm")
-    
-    ## Save Data
-    ggsave(paste0("../figs/RESID_futher_vote_binscatter_",curr_state,".png"),plot = resid_bin_plot, width = 8, height = 6, dpi = 300)
+    ## Loop and save through each state distinction
+    for (curr_state in states){
+      if (curr_state == "ALL"){ # Keeping all states
+        scatter_dat = analysis_dat
+      } else if (curr_state == "ALL_CORRECTED"){ # Keeping states that I manually select
+        scatter_dat = analysis_dat[!(state %in% c("KS", "MA", 'MD', 'MO', 'NE'))] # NEED TO STILL CHANGE THIS 
+      } else {
+        scatter_dat = analysis_dat[state == curr_state]
+      }
+      
+      ## Finding the residualized values
+      scatter_dat[,year_state := paste("year", "state")]
+      scatter_dat[,fips_sedacz := paste("fips", "sedacz")]
+      scatter_dat[,zero_ind := (var_interest == 0)*1]
+      reg_out = felm(var_interest ~ totvotes | fips_sedacz + year_state, data = scatter_dat)
+      reg_out = felm(var_interest ~ totvotes | leaid + year_state, data = scatter_dat)
+      scatter_dat[, RESID_share_ref := reg_out$residuals]
+      
+      ## Creating data for bin scatter
+      below <- scatter_dat[centered_vote_share < 0][order(centered_vote_share)]
+      above <- scatter_dat[centered_vote_share > 0][order(centered_vote_share)]
+      
+      n_rows_below <- nrow(below)
+      n_rows_above <- nrow(above)
+      n_per_bin <- max(min(round(n_rows_above / 15), round(n_rows_below / 15)), 1)
+      
+      # Compute number of bins
+      n_bins_below <- ceiling(n_rows_below / n_per_bin)
+      n_bins_above <- ceiling(n_rows_above / n_per_bin)
+      
+      # Sort by distance from 0 (absolute value), then assign bin index
+      below <- below[order(abs(centered_vote_share))]
+      above <- above[order(abs(centered_vote_share))]
+      
+      # Assign bins: center-outward
+      below[, bin := paste0("L", rep(1:n_bins_below, each = n_per_bin))[1:.N]]
+      above[, bin := paste0("R", rep(1:n_bins_above, each = n_per_bin))[1:.N]]
+      
+      # Combine and aggregate
+      # binned_dat <- rbind(below, above)[
+      #   , .(
+      #     centered_vote_share = mean(centered_vote_share, na.rm = TRUE),
+      #     share_ref_mean = mean(share_ref_future_neighbor, na.rm = TRUE),
+      #     n = .N
+      #   ),
+      #   by = bin
+      # ][order(centered_vote_share)]
+      
+      binned_dat <- rbind(below, above)[
+        , .(
+          centered_vote_share = mean(centered_vote_share, na.rm = TRUE),
+          share_ref_mean = mean(RESID_share_ref, na.rm = TRUE), # this is the difference
+          n = .N
+        ),
+        by = bin
+      ][order(centered_vote_share)]
+      
+      vote_band_high = 0.05
+      vote_band_low = -1*vote_band_high
+      
+      ## Plot the bin scatter
+      resid_bin_plot <-
+        ggplot(binned_dat, aes(x = centered_vote_share, y = share_ref_mean)) +
+        geom_point() +
+        geom_vline(xintercept = 0, color = "lightcoral", linewidth = 0.3) +
+        labs(
+          x = "Vote Share (Centered)",
+          y = "Resid. Referendum Share"
+        ) 
+      
+      # +
+      #   theme_minimal(base_size = 14) +
+      #   stat_smooth(data=scatter_dat,
+      #               aes(centered_vote_share, RESID_share_ref, group = winner),
+      #               method = "lm")
+      
+      ## Save Data
+      ggsave(paste0("../figs/RESID_futher_vote_binscatter_",curr_state,"_",run_type,".png"),plot = resid_bin_plot, width = 8, height = 6, dpi = 300)
+    }
   }
 }
 

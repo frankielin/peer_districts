@@ -24,9 +24,14 @@ data <- get_education_data(level = "school-districts",
 ## - leaid: Identifies district (NCES)
 ## - Anything that starts with exp: These are the expenditure variables
 
+saipe_data <- get_education_data(level = "school-districts",
+                           source = "saipe")
+
+
 ############
 ## Export ##
 ############
 ## Missing data from 1992 to 1993
 ## Data stops at 2020
 write.csv(data,"../data/UI_district_finances.csv", row.names = FALSE)
+write.csv(saipe_data,"../data/UI_district_sapie.csv", row.names = FALSE)
