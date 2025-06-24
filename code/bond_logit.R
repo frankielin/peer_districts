@@ -35,6 +35,9 @@ district_saipe=fread("../data/UI_district_sapie.csv")
 ## Loading district crosswalk data 
 touching_districts=fread("../data/referendum/touching_districts.csv")
 
+## Loading Charter Data 
+school_enroll = fread("../data/UI_district_directory.csv")
+
 ###################
 ## Cleaning Data ##
 ###################
@@ -74,7 +77,7 @@ by = .(leaid, year)
 ]
 
 
-#### SAPIE Data (Poverty Stats)
+#### SAPIE Data (enrollment Stats)
 ## Removing DC and Hawaii
 bad_states = c(11, 15)
 district_saipe = district_saipe[!(fips%in%bad_states) ]
@@ -104,6 +107,32 @@ average_poverty_dat[, leaid := sprintf("%07d", as.integer(leaid))]
 table(is.na(average_poverty_dat$poverty_qtile)) 
 table(is.na(average_poverty_dat$poverty_dtile)) 
 
+#### ENROLLMENT DATA
+## 
+school_enroll = school_enroll[enrollment>0]
+not_charter = c(0,-1,-2)
+school_enroll[,is_charter:=1*!(charter %in% not_charter)]
+district_enroll <- school_enroll[, lapply(.SD, function(x) sum(x, na.rm = TRUE)), 
+                                 by = c('leaid', 'year', 'is_charter'), 
+                                 .SDcols = "enrollment"]
+district_enroll <- dcast(district_enroll, leaid + year ~ is_charter, value.var = "enrollment")
+setnames(district_enroll, c("0", "1"), c("public_enrollment", "charter_enrollment"))
+district_enroll[is.na(charter_enrollment), charter_enrollment:= 0]  
+district_enroll[is.na(public_enrollment), public_enrollment:= 0]  
+district_enroll[,leaid:=sprintf("%07d", as.integer(leaid))] 
+district_enroll[,total_enrollment := public_enrollment + charter_enrollment]
+
+## Calculating different quantiles of the poverty rates (Consider doing this by states too)
+district_enroll[, enrollment_qtile := cut(total_enrollment,
+                                           breaks = quantile(total_enrollment, probs = seq(0, 1, 0.2), na.rm = TRUE),
+                                           include.lowest = TRUE,
+                                           labels = FALSE)]
+
+district_enroll[, enrollment_dtile := cut(total_enrollment,
+                                           breaks = quantile(total_enrollment, probs = seq(0, 1, 0.1), na.rm = TRUE),
+                                           include.lowest = TRUE,
+                                           labels = FALSE)]
+
 #######################################
 ## CREATING COMMUTING ZONE DATAFRAME ##
 #######################################
@@ -112,6 +141,9 @@ table(is.na(average_poverty_dat$poverty_dtile))
 states_in_bonds = unique(in_bonds[,state_fips])
 district_finances[,fips:=sprintf("%02d", as.integer(fips))] # rename fips into the two digit state fips 
 district_finances = district_finances[.(states_in_bonds), on = .(fips)] # Filters (binary search bitches)
+
+## Merging Enrollment Data
+district_finances <- merge(district_finances, district_enroll, by = c('leaid','year'),  all.x = TRUE)
 
 ## Merging poverty data
 district_finances <- merge(district_finances, average_poverty_dat, by = 'leaid',  all.x = TRUE)
@@ -446,6 +478,8 @@ baseline_referendum_rate
 ##############################
 ## HETEROGENITY REGRESSIONS ##
 ##############################
+
+#### POVERTY
 ## Checking my coverage for the heterogeneity analysis 
 table(analysis_dat[,poverty_qtile]) # we are slightly more over represented by higher poverty districts
 table(is.na(analysis_dat[,poverty_qtile])) # Okay so we aren't missing any
@@ -597,3 +631,128 @@ hetero_plot <- ggplot(coef_all, aes(x = factor(qt), y = Estimate, color = model,
 hetero_plot
 
 ggsave(paste0("../figs/hetero_plot.png"),plot = hetero_plot, width = 8, height = 4, dpi = 300)
+
+
+#### Charter Presence
+analysis_dat[,has_charters:= 1*(charter_enrollment>0)]
+analysis_dat[,has_charter_share_past_winning_ref:= has_charters*share_past_winning_ref]
+analysis_dat[,has_charter_share_past_winning_ref_neighbors:= has_charters*share_past_winning_ref_neighbors]
+
+out_neighbors <- felm(bond_instance ~ 
+                        has_charter_share_past_winning_ref_neighbors + 
+                        share_past_winning_ref_neighbors +
+                        N_ref_past_districts_neighbors + 
+                        has_charters + 
+                        recent_ref + 
+                        rev_state_total +
+                        rev_local_total + 
+                        exp_total +
+                        enrollment_fall_responsible
+                      | year_state + leaid | 0 | leaid, data = analysis_dat)
+
+# out_neighbors <- felm(bond_instance ~ 
+#                         has_charter_share_past_winning_ref_neighbors + 
+#                         share_past_winning_ref_neighbors +
+#                         N_ref_past_districts_neighbors + 
+#                         has_charters + 
+#                         recent_ref + 
+#                         rev_state_total +
+#                         rev_local_total + 
+#                         exp_total +
+#                         enrollment_fall_responsible
+#                       | year_cz + leaid | 0 | leaid, data = analysis_dat)
+
+summary(out_neighbors) 
+
+out_cz <- felm(bond_instance ~ 
+                 has_charter_share_past_winning_ref + 
+                 share_past_winning_ref + 
+                 past_unique_ref_districts + 
+                 has_charters +
+                 recent_ref + 
+                 rev_state_total +
+                 rev_local_total + 
+                 exp_total+
+                 enrollment_fall_responsible
+               | year_state + leaid | 0 | leaid, data = analysis_dat)
+
+summary(out_cz)
+
+#### Enrollment Quantile
+analysis_dat[,enrollment_qtile_1 :=(enrollment_qtile == 1)]
+analysis_dat[,enrollment_qtile_2 :=(enrollment_qtile == 2)]
+analysis_dat[,enrollment_qtile_3 :=(enrollment_qtile == 3)]
+analysis_dat[,enrollment_qtile_4 :=(enrollment_qtile == 4)]
+analysis_dat[,enrollment_qtile_5 :=(enrollment_qtile == 5)]
+
+analysis_dat[, enrollment_qtile_1_share_past_winning_ref := (enrollment_qtile == 1) * share_past_winning_ref]
+analysis_dat[, enrollment_qtile_2_share_past_winning_ref := (enrollment_qtile == 2) * share_past_winning_ref]
+analysis_dat[, enrollment_qtile_3_share_past_winning_ref := (enrollment_qtile == 3) * share_past_winning_ref]
+analysis_dat[, enrollment_qtile_4_share_past_winning_ref := (enrollment_qtile == 4) * share_past_winning_ref]
+analysis_dat[, enrollment_qtile_5_share_past_winning_ref := (enrollment_qtile == 5) * share_past_winning_ref]
+
+analysis_dat[, enrollment_qtile_1_share_past_winning_ref_neighbors := (enrollment_qtile == 1) * share_past_winning_ref_neighbors]
+analysis_dat[, enrollment_qtile_2_share_past_winning_ref_neighbors := (enrollment_qtile == 2) * share_past_winning_ref_neighbors]
+analysis_dat[, enrollment_qtile_3_share_past_winning_ref_neighbors := (enrollment_qtile == 3) * share_past_winning_ref_neighbors]
+analysis_dat[, enrollment_qtile_4_share_past_winning_ref_neighbors := (enrollment_qtile == 4) * share_past_winning_ref_neighbors]
+analysis_dat[, enrollment_qtile_5_share_past_winning_ref_neighbors := (enrollment_qtile == 5) * share_past_winning_ref_neighbors]
+
+
+out_cz <- felm(bond_instance ~ 
+                 enrollment_qtile_2_share_past_winning_ref +
+                 enrollment_qtile_3_share_past_winning_ref +
+                 enrollment_qtile_4_share_past_winning_ref +
+                 enrollment_qtile_5_share_past_winning_ref +
+                 enrollment_qtile_2 +
+                 enrollment_qtile_3 +
+                 enrollment_qtile_4 + 
+                 enrollment_qtile_5 +
+                 share_past_winning_ref +
+                 past_unique_ref_districts + 
+                 recent_ref + 
+                 rev_state_total +
+                 rev_local_total + 
+                 exp_total+
+                 enrollment_fall_responsible
+               | year_state + leaid | 0 | leaid, data = analysis_dat)
+
+summary(out_cz)
+
+out_neighbors <- felm(bond_instance ~ 
+                        enrollment_qtile_2_share_past_winning_ref_neighbors + 
+                        enrollment_qtile_3_share_past_winning_ref_neighbors + 
+                        enrollment_qtile_4_share_past_winning_ref_neighbors + 
+                        enrollment_qtile_5_share_past_winning_ref_neighbors + 
+                        enrollment_qtile_2 +
+                        enrollment_qtile_3 +
+                        enrollment_qtile_4 + 
+                        enrollment_qtile_5 +
+                        share_past_winning_ref_neighbors +
+                        N_ref_past_districts_neighbors + 
+                        recent_ref + 
+                        rev_state_total +
+                        rev_local_total + 
+                        exp_total +
+                        enrollment_fall_responsible
+                      | year_state + leaid | 0 | leaid, data = analysis_dat)
+
+summary(out_neighbors)
+
+
+
+###################
+## Testing Suite ##
+###################
+sd(analysis_dat[poverty_qtile == 1,share_past_winning_ref])
+sd(analysis_dat[poverty_qtile == 2,share_past_winning_ref])
+sd(analysis_dat[poverty_qtile == 3,share_past_winning_ref])
+sd(analysis_dat[poverty_qtile == 4,share_past_winning_ref])
+sd(analysis_dat[poverty_qtile == 5,share_past_winning_ref])
+
+
+
+
+
+
+
+
