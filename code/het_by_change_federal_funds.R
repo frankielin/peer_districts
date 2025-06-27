@@ -17,20 +17,20 @@ library(stargazer)
 ## Loading Data ##
 ##################
 ## Loading Referendum Data 
-in_bonds = fread("../data/referendum/bonds_biasi.csv") # Bond Ref Data
+in_bonds = fread("C:/Users/rwmoo/OneDrive/Documents/Classes/Research/school_referenda/data/referendum/bonds_biasi.csv") # Bond Ref Data
 
 ## Commuting Zone Data 
 # leaid_bounds=read_sf("../data/us_district_shapefile/schooldistrict_sy1718_tl18.shp") # There is no shp file in the folder?
-in_cz = fread("../data/seda_crosswalk_5.0.csv")
+in_cz = fread("C:/Users/rwmoo/OneDrive/Documents/Classes/Research/school_referenda/data/seda_crosswalk_5.0.csv")
 
 ## Loading Shape Files 
-leaid_bounds=read_sf("../data/us_district_shapefile") # Loading overall shp files (is this correct to pull? I assume no)
+leaid_bounds=read_sf("C:/Users/rwmoo/OneDrive/Documents/Classes/Research/school_referenda/data/us_district_shapefile") # Loading overall shp files (is this correct to pull? I assume no)
 
 ## Loading district finance data 
-district_finances = fread("../data/UI_district_finances.csv")
+district_finances = fread("C:/Users/rwmoo/OneDrive/Documents/Classes/Research/school_referenda/data/UI_district_finances.csv")
 
 ## Loading district crosswalk data 
-touching_districts=fread("../data/touching_districts.csv")
+touching_districts=fread("C:/Users/rwmoo/OneDrive/Documents/Classes/Research/school_referenda/data/touching_districts.csv")
 
 
 ###################
@@ -72,7 +72,7 @@ by = .(leaid, year)
 ]
 
 
-## Calculating annual changes in district finances
+## Calculating annualchanges in district finances
 district_finances[,rev_total := rev_total - rev_local_total]
 district_finances_dat=subset(district_finances, enrollment_fall_responsible>0, select=c("year","fips", "leaid","rev_total", "rev_fed_total", "rev_state_total", "enrollment_fall_responsible"))
 district_finances_lagged = copy(district_finances_dat)
@@ -87,6 +87,9 @@ district_finances_dat[, rev_state_change := rev_state_total - rev_state_total_la
 district_finances_dat[, rev_pct_change := (rev_total - rev_total_lag) / rev_total_lag]
 district_finances_dat[, rev_pp_change := (rev_fed_total/enrollment_fall_responsible) - (rev_fed_total_lag/enrollment_fall_responsible_lag)]
 
+hist(district_finances_dat[rev_pp_change>-200 & rev_pp_change<5000]$rev_pp_change)
+hist(district_finances_dat[rev_pct_change>-.05 & rev_pct_change<.5]$rev_pct_change)
+
 
 district_finances_dat[, change_qtile := cut(rev_pp_change,
                                            breaks = quantile(rev_pp_change, probs = seq(0, 1, 0.2), na.rm = TRUE),
@@ -100,6 +103,7 @@ district_change_rev = district_finances_dat[,c('leaid','year','fips', 'rev_fed_c
 
 district_change_rev[, leaid := sprintf("%07d", as.integer(leaid))]
 
+table(is.na(district_change_rev$poverty_qtile)) 
 district_change_rev$fips=as.character(district_change_rev$fips)
 district_change_rev = merge(seda_dist_cz_xwalk, district_change_rev, by=c('leaid','fips'))
 #######################################
@@ -242,7 +246,7 @@ district_finances = N_past_losing_refs_dat[
 ] # Merging back onto the main dataframe
 
 
-## Checking the share of districts within CZ that had a revenue increase in the top quintiles in the last X years
+## Checking the share of districts within CZ that had a revenue increase in the top quintile in the last X years
 set_year_past = 3
 
 left = district_finances[,c('leaid','fips','sedacz','year')]
@@ -481,6 +485,19 @@ analysis_dat[, change_qtile_3_share_big_increase := (change_qtile == 3) * share_
 analysis_dat[, change_qtile_4_share_big_increase := (change_qtile == 4) * share_big_rev_change]
 analysis_dat[, change_qtile_5_share_big_increase := (change_qtile == 5) * share_big_rev_change]
 
+out_cz <- felm(bond_instance ~ 
+                 change_qtile_2_share_big_increase +
+                 change_qtile_3_share_big_increase +
+                 change_qtile_4_share_big_increase +
+                 change_qtile_5_share_big_increase +
+                 recent_ref + 
+                 rev_state_total +
+                 rev_local_total + 
+                 exp_total+
+                 enrollment_fall_responsible
+               | year_state, data = analysis_dat)
+
+summary(out_cz)
 
 ## Extract coefficients from the out_cz model
 coef_cz <- as.data.table(summary(out_cz)$coefficients, keep.rownames = "term")
