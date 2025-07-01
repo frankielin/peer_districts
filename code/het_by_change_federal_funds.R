@@ -72,9 +72,9 @@ by = .(leaid, year)
 ]
 
 
-## Calculating annualchanges in district finances
-district_finances[,rev_total := rev_total - rev_local_total]
-district_finances_dat=subset(district_finances, enrollment_fall_responsible>0, select=c("year","fips", "leaid","rev_total", "rev_fed_total", "rev_state_total", "enrollment_fall_responsible"))
+## Calculating annual changes in district finances
+district_finances[,rev_state_and_fed_total := rev_total - rev_local_total]
+district_finances_dat=subset(district_finances, enrollment_fall_responsible>0, select=c("year","fips", "leaid","rev_total", "rev_fed_total", "rev_state_total", "rev_state_and_fed_total", "enrollment_fall_responsible"))
 district_finances_lagged = copy(district_finances_dat)
 district_finances_lagged$year = district_finances_lagged$year + 1
 
@@ -85,18 +85,14 @@ district_finances_dat[, rev_fed_change := rev_fed_total - rev_fed_total_lag]
 district_finances_dat[, rev_state_change := rev_state_total - rev_state_total_lag]
 
 district_finances_dat[, rev_pct_change := (rev_total - rev_total_lag) / rev_total_lag]
-district_finances_dat[, rev_pp_change := (rev_fed_total/enrollment_fall_responsible) - (rev_fed_total_lag/enrollment_fall_responsible_lag)]
-
-hist(district_finances_dat[rev_pp_change>-200 & rev_pp_change<5000]$rev_pp_change)
-hist(district_finances_dat[rev_pct_change>-.05 & rev_pct_change<.5]$rev_pct_change)
+district_finances_dat[, rev_pp_change := (rev_state_and_fed_total/enrollment_fall_responsible) - (rev_state_and_fed_total_lag/enrollment_fall_responsible_lag)]
+#district_finances_dat[, rev_pp_change := (rev_fed_total/enrollment_fall_responsible) - (rev_fed_total_lag/enrollment_fall_responsible_lag)]
 
 
 district_finances_dat[, change_qtile := cut(rev_pp_change,
-                                           breaks = quantile(rev_pp_change, probs = seq(0, 1, 0.2), na.rm = TRUE),
+                                           breaks = quantile(rev_pp_change, probs = seq(0, 1, 0.1), na.rm = TRUE),
                                            include.lowest = TRUE,
-                                           labels = FALSE),
-                    by = fips]
-
+                                           labels = FALSE)]
 
 
 district_change_rev = district_finances_dat[,c('leaid','year','fips', 'rev_fed_change', 'change_qtile')]
@@ -252,7 +248,7 @@ set_year_past = 3
 left = district_finances[,c('leaid','fips','sedacz','year')]
 left[,max_year:= year-1]
 left[,min_year:= year-set_year_past]
-instances = subset(district_change_rev, change_qtile %in% 4:5, select=c('leaid','fips','sedacz','year'))
+instances = subset(district_change_rev, change_qtile %in% 10, select=c('leaid','fips','sedacz','year'))
 setnames(instances, 
          c('leaid','fips','sedacz','year'), 
          paste0("instance_", c('leaid','fips','sedacz','year')))
@@ -414,6 +410,7 @@ analysis_dat[, share_past_ref := past_unique_ref_districts/(n_in_cz-1)]
 analysis_dat[, share_past_losing_ref := past_unique_losing_ref_districts/(n_in_cz-1)]
 analysis_dat[, share_past_winning_ref := past_unique_winning_ref_districts/(n_in_cz-1)]
 analysis_dat[, share_big_rev_change := big_rev_change_districts/(n_in_cz-1)]
+analysis_dat[, flag_big_rev_change := ifelse(big_rev_change_districts>0, 1, 0)]
 
 ## Creating Data for neighbors
 analysis_dat[, share_past_ref_neighbors := N_ref_past_districts_neighbors/(N_neighbors)]
@@ -435,7 +432,7 @@ analysis_dat[,first_ref := (bond_instance == 1)*is.na(year_of_last_ref)]
 analysis_dat[,years_since_last_ref:= year - year_of_last_ref]
 analysis_dat[,recent_ref := years_since_last_ref >= 3]
 analysis_dat[is.na(recent_ref),recent_ref := 0]
-analysis_dat[, own_big_rev_change := ifelse(change_qtile %in% 4:5, 1, 0)]
+analysis_dat[, own_big_rev_change := ifelse(change_qtile %in% 10, 1, 0)]
 
 check = analysis_dat[, c('year', 'leaid', 'bond_instance', 'first_ref', 'year_of_last_ref')]
 
@@ -479,44 +476,53 @@ summary(out_cz)
 table(analysis_dat[,change_qtile]) # we are slightly more over represented in low change districts
 table(is.na(analysis_dat[,change_qtile])) # missing a lot
 
-analysis_dat[, change_qtile_1_share_big_increase := (change_qtile == 1) * share_big_rev_change]
-analysis_dat[, change_qtile_2_share_big_increase := (change_qtile == 2) * share_big_rev_change]
-analysis_dat[, change_qtile_3_share_big_increase := (change_qtile == 3) * share_big_rev_change]
-analysis_dat[, change_qtile_4_share_big_increase := (change_qtile == 4) * share_big_rev_change]
-analysis_dat[, change_qtile_5_share_big_increase := (change_qtile == 5) * share_big_rev_change]
+analysis_dat[, change_qtile_1_share_big_increase := (change_qtile == 1) * flag_big_rev_change]
+analysis_dat[, change_qtile_2_share_big_increase := (change_qtile == 2) * flag_big_rev_change]
+analysis_dat[, change_qtile_3_share_big_increase := (change_qtile == 3) * flag_big_rev_change]
+analysis_dat[, change_qtile_4_share_big_increase := (change_qtile == 4) * flag_big_rev_change]
+analysis_dat[, change_qtile_5_share_big_increase := (change_qtile == 5) * flag_big_rev_change]
+analysis_dat[, change_qtile_6_share_big_increase := (change_qtile == 6) * flag_big_rev_change]
+analysis_dat[, change_qtile_7_share_big_increase := (change_qtile == 7) * flag_big_rev_change]
+analysis_dat[, change_qtile_8_share_big_increase := (change_qtile == 8) * flag_big_rev_change]
+analysis_dat[, change_qtile_9_share_big_increase := (change_qtile == 9) * flag_big_rev_change]
+analysis_dat[, change_qtile_10_share_big_increase := (change_qtile == 10) * flag_big_rev_change]
+
 
 out_cz <- felm(bond_instance ~ 
                  change_qtile_2_share_big_increase +
                  change_qtile_3_share_big_increase +
                  change_qtile_4_share_big_increase +
                  change_qtile_5_share_big_increase +
-                 recent_ref + 
-                 rev_state_total +
-                 rev_local_total + 
-                 exp_total+
-                 enrollment_fall_responsible
-               | year_state, data = analysis_dat)
+                 change_qtile_6_share_big_increase +
+                 change_qtile_7_share_big_increase +
+                 change_qtile_8_share_big_increase +
+                 change_qtile_9_share_big_increase +
+                 change_qtile_10_share_big_increase +
+                 recent_ref
+                |year_state, data = analysis_dat)
 
 summary(out_cz)
 
 ## Extract coefficients from the out_cz model
 coef_cz <- as.data.table(summary(out_cz)$coefficients, keep.rownames = "term")
 coef_cz <- coef_cz[term %like% "change_qtile_"]
-coef_cz[, qt := 2:5]
+coef_cz[, qt := 2:10]
 coef_cz[, model := "Commuting Zone"]
 coef_cz[, ci_lower := Estimate - 1.96 * `Std. Error`]
 coef_cz[, ci_upper := Estimate + 1.96 * `Std. Error`]
 
-
+zero_quint=unique(district_finances_dat[rev_pp_change==0, change_qtile])-1
 
 hetero_plot <- ggplot(coef_cz, aes(x = factor(qt), y = Estimate)) +
   geom_point(position = position_dodge(width = 0.4), size = 3) +
   geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper),
                 width = 0.2, position = position_dodge(width = 0.4)) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
-  labs(x = "Change Federal PP Revenue Quantile", y = "Coefficient Estimate",
+  geom_vline(xintercept = zero_quint, color="black") +
+  labs(x = "Change State + Federal PP Revenue Quantile", y = "Coefficient Estimate",
        color = "Model", shape = "Model") +
-  theme_minimal()
+  theme_classic()
 
 hetero_plot
 
+ggsave(plot = hetero_plot, filename = "Classes/Research/school_referenda/Graphs/state_and_fed_funding_het_neighbors.png", width = 12, height = 9)
